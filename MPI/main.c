@@ -8,14 +8,10 @@
 #define Width 1920
 
 
-/*
-
-
-
-*/
 
 //filter mask
-float h[3][3];
+//filter mask
+const float h[3][3] = {{0.0625,0.125,0.0625}, {0.125 ,0.25,0.125},{0.0625,0.125,0.0625}} ;
 
 //Setting the height and width of the sub-images global
 int Ph, Pw;
@@ -63,6 +59,7 @@ int main(int argc, char** argv) {
     int TotIter;
 
 
+
     int file_offset;
 
     //
@@ -75,16 +72,6 @@ int main(int argc, char** argv) {
     // change pointers to data to avoid copy of matrices
     float *temp_pointer;
 
-    //filter initialize
-	h[0][0] = 0.0625;
-	h[0][1] = 0.125;
-	h[0][2] = 0.0625;
-	h[1][0] = 0.125;
-	h[1][1] = 0.25;
-	h[1][2] = 0.125;
-	h[2][0] = 0.0625;
-	h[2][1] = 0.125;
-	h[2][2] = 0.0625;
 
     MPI_Init(&argc, &argv);
 
@@ -153,30 +140,38 @@ int main(int argc, char** argv) {
             printf("argv[%d]: %s\n", i, argv[i]);
         }
     }
-
+    
+    TotIter = atoi(argv[2]); // number of iteration from arguments
+    
+    
+	 fp = malloc(sizeof(MPI_File));
     if (atoi(argv[1])==1) {
         d = 1;
+        MPI_File_open(cart_comm, "images/grey_X1.raw", MPI_MODE_RDONLY, MPI_INFO_NULL, fp);
     } else if (atoi(argv[1])==3) {
+		MPI_File_open(cart_comm, "images/waterfall_1920_2520.raw", MPI_MODE_RDONLY, MPI_INFO_NULL, fp);
         d = 3;
     }
-    TotIter = atoi(argv[2]);
+    
 
     time0 = MPI_Wtime();
-
     image = malloc(d*Pw*Ph);
-
     MPI_Type_vector(Ph, d*Pw, d*Width, MPI_UNSIGNED_CHAR, &Filetype);
     MPI_Type_commit(&Filetype);
 
     file_offset = d*Pw*coords[1] + d*Width*Ph*coords[0];
 
     /* READ IMAGE DATA */
-    fp = malloc(sizeof(MPI_File));
-    MPI_File_open(cart_comm, "images/grey_X1.raw", MPI_MODE_RDONLY, MPI_INFO_NULL, fp);
-    MPI_File_set_view (*fp, file_offset, MPI_UNSIGNED_CHAR, Filetype, "native", MPI_INFO_NULL);
-    MPI_File_read(*fp, image, d*Pw*Ph, MPI_UNSIGNED_CHAR, MPI_STATUSES_IGNORE);
-    MPI_File_close(fp);
-
+   
+    if (fp != NULL) {
+		MPI_File_set_view (*fp, file_offset, MPI_UNSIGNED_CHAR, Filetype, "native", MPI_INFO_NULL);
+		MPI_File_read(*fp, image, d*Pw*Ph, MPI_UNSIGNED_CHAR, MPI_STATUSES_IGNORE);
+		MPI_File_close(fp);
+	}else{
+		printf("Empty file...The programm will exit");
+		exit(1);
+	}
+		
     input_imag = (float*)malloc(sizeof(float)*d*(Ph+2)*(Pw+2));
     output_imag = (float*)malloc(sizeof(float)*d*(Ph+2)*(Pw+2));
 
@@ -204,7 +199,7 @@ int main(int argc, char** argv) {
     MPI_Barrier(cart_comm);
 
     time1 = MPI_Wtime();
-
+	
     for (Iter=1; Iter<=TotIter; Iter++){
 
         if (world_rank == 0)
@@ -241,7 +236,7 @@ int main(int argc, char** argv) {
 
         /* Filter inner pixels before local communication finish */
        // filteringInnerImage(input_imag, output_imag);
-			   int i,j,n,m,l,k;
+		int i,j,n,m,l,k;
       /* COMPUTE INNER DATA */
       /* inner data can be computated before communication finish */
 		for (i=2; i<Ph; i++) {
@@ -265,58 +260,50 @@ int main(int argc, char** argv) {
 
         /* Filter outter pixels after local communication finish */
        // filteringOutterImage(input_imag, output_imag);
-       
-         
-    float x[3][3], temp;
+                
+		float x[3][3], temp;
 
-    for (i=0; i<=1; i++) {
-        for (j=1; j<=Pw; j++) {
+		for (i=0; i<=1; i++) {
+			for (j=1; j<=Pw; j++) {
 
-            for (l=0; l<3; l++) {
-                k = d*(Pw+2+j)+i*d*(Pw+2)*(Ph-1)+l;
-                temp = 0;
-                for (n=0; n<3; n++) {
-                    for (m=0; m<3; m++) {
+				for (l=0; l<3; l++) {
+					k = d*(Pw+2+j)+i*d*(Pw+2)*(Ph-1)+l;
+					temp = 0;
+					for (n=0; n<3; n++) {
+						for (m=0; m<3; m++) {
 
-                        x[n][m] = input_imag[k+(n-1)*d*(Pw+2)+d*(m-1)];
-                        if (x[n][m]==-1) {
-                            x[n][m] =  input_imag[k];
-                        }
-
-                        temp += x[n][m] * h[n][m];
-                    }
-
-                }
-                output_imag[k] = temp;
-            }
-
-        }
-    }
+							x[n][m] = input_imag[k+(n-1)*d*(Pw+2)+d*(m-1)];
+							if (x[n][m]==-1) {
+								x[n][m] =  input_imag[k];
+							}
+							temp += x[n][m] * h[n][m];
+						}
+					}
+					output_imag[k] = temp;
+				}
+			}
+		}
 
 
-    /* filter columns */
-    for (i=2; i<Ph; i++) {
-        for (j=0; j<=1; j++) {
-            for (l=0; l<3; l++) {
-                k = i*d*(Pw+2)+d+j*d*(Pw-1)+l;
-                temp = 0;
-                for (n=0; n<3; n++) {
-                    for (m=0; m<3; m++) {
-
-                        x[n][m] = input_imag[k+(n-1)*d*(Pw+2)+d*(m-1)];
-                        if (x[n][m]==-1) {
-                            x[n][m] =  input_imag[k];
-                        }
-
-                        temp += x[n][m] * h[n][m];
-                    }
-
-                }
-                output_imag[k] = temp;
-            }
-
-        }
-    }
+		/* filter columns */
+		for (i=2; i<Ph; i++) {
+			for (j=0; j<=1; j++) {
+				for (l=0; l<3; l++) {
+					k = i*d*(Pw+2)+d+j*d*(Pw-1)+l;
+					temp = 0;
+					for (n=0; n<3; n++) {
+						for (m=0; m<3; m++) {
+							x[n][m] = input_imag[k+(n-1)*d*(Pw+2)+d*(m-1)];
+							if (x[n][m]==-1) {
+								x[n][m] =  input_imag[k];
+							}
+							temp += x[n][m] * h[n][m];
+						}
+					}
+					output_imag[k] = temp;
+				}
+			}
+		}
        
 
         /* swap pointers of new and old sub-images */
@@ -347,7 +334,6 @@ int main(int argc, char** argv) {
                 printf("Iter:%d total_check:%d\n", Iter, tot_check);
             }
         }
-
     }
 
     time2 = MPI_Wtime();
@@ -362,11 +348,17 @@ int main(int argc, char** argv) {
     }
 
     /* PRINT OUTPUT TO FILE */
-    MPI_File_open(cart_comm, "images/data_out2.raw", MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, fp);
+    if (atoi(argv[1]) == 3)
+		MPI_File_open(cart_comm, "images/image_out_RGB.raw", MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, fp);
+	else 
+		MPI_File_open(cart_comm, "images/image_out_gray.raw", MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, fp);
+		
     MPI_File_set_view (*fp, file_offset, MPI_UNSIGNED_CHAR, Filetype, "native", MPI_INFO_NULL);
     MPI_File_write(*fp, image, d*Pw*Ph, MPI_UNSIGNED_CHAR, MPI_STATUSES_IGNORE);
     MPI_File_close(fp);
 
+
+	//Calculation of  Total and Computation time, 
     time3 = MPI_Wtime();
     comp_time = time2-time1;
     tot_time = time3-time0;
@@ -387,11 +379,17 @@ int main(int argc, char** argv) {
 
     return 0;
 }
+//=====================================================================================
+// The below functions has been implemented for better readabilty of the code, but since using them we 
+//	achive worse computation time than before , we decided to calculate the convolution (3 nested for) inside 
+//	of the main programm 
+//=====================================================================================
 
+/*
 void filteringInnerImage (float *input_imag, float *output_imag) {
     int i,j,l;
-      /* COMPUTE INNER DATA */
-      /* inner data can be computated before communication finish */
+      // COMPUTE INNER DATA 
+      // inner data can be computated before communication finish 
     for (i=2; i<Ph; i++) {
         for (j=2; j<Pw; j++) {
             for (l=0; l<d; l++) {
@@ -410,7 +408,7 @@ void filteringInnerImage (float *input_imag, float *output_imag) {
 }
 
 void filteringOutterImage(float *input_imag , float *output_imag) {
-    /* filter rows and corner pixels*/
+    // filter rows and corner pixels
     int i,j,n,m,l,k;
     float x[3][3], temp;
 
@@ -439,7 +437,7 @@ void filteringOutterImage(float *input_imag , float *output_imag) {
     }
 
 
-    /* filter columns */
+    // filter columns 
     for (i=2; i<Ph; i++) {
         for (j=0; j<=1; j++) {
             for (l=0; l<3; l++) {
@@ -464,3 +462,4 @@ void filteringOutterImage(float *input_imag , float *output_imag) {
     }
 
 }
+*/
